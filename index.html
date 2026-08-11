@@ -47,10 +47,13 @@
   .stat-card{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px 8px; text-align:center;}
   .stat-card .v{font-size:22px; font-weight:800; font-variant-numeric:tabular-nums;}
   .stat-card .l{font-size:11px; color:var(--sub); margin-top:4px;}
-  .gps-badge{ display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--sub); margin-top:10px;}
-  .dot{width:8px; height:8px; border-radius:50%; background:var(--sub);}
+  .gps-badge{ display:flex; align-items:center; gap:6px; font-size:12px; color:var(--sub); margin-top:10px;}
+  .dot{width:8px; height:8px; border-radius:50%; background:var(--sub); flex:none;}
   .dot.ok{background:var(--good);}
   .dot.bad{background:var(--bad);}
+  .gps-badge.err{ color:var(--bad); font-weight:700; }
+  .gps-help{ font-size:12px; color:var(--sub); margin-top:6px; line-height:1.6; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:10px 12px; display:none;}
+  .gps-help.show{ display:block; }
   .controls{ display:flex; gap:10px; margin-top:16px;}
   button{ font-family:inherit; border:none; cursor:pointer; }
   .btn{ flex:1; padding:16px 10px; border-radius:14px; font-size:16px; font-weight:700; }
@@ -68,6 +71,11 @@
   .run-card .meta{font-size:12px; color:var(--sub); margin-top:4px;}
   .run-card .del{ background:none; color:var(--sub); font-size:18px; padding:6px 10px;}
   .empty{ text-align:center; color:var(--sub); padding:40px 10px; font-size:14px; }
+  .section-title{ font-size:13px; color:var(--sub); margin:18px 2px 8px; font-weight:700; }
+  .month-card{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:12px 14px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; }
+  .month-card .m{ font-size:14px; font-weight:700; }
+  .month-card .d{ font-size:16px; font-weight:800; }
+  .month-card .c{ font-size:11px; color:var(--sub); margin-left:6px; font-weight:400; }
 
   /* ---- modal ---- */
   .modal-back{ position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:40; display:none; align-items:flex-end; }
@@ -101,7 +109,8 @@
 <!-- 記録画面 -->
 <section class="screen active" id="screen-record">
   <div id="map"></div>
-  <div class="gps-badge"><span class="dot" id="gpsDot"></span><span id="gpsText">GPS待機中</span></div>
+  <div class="gps-badge" id="gpsBadge"><span class="dot" id="gpsDot"></span><span id="gpsText">GPS待機中</span></div>
+  <div class="gps-help" id="gpsHelp"></div>
 
   <div class="stats-grid">
     <div class="stat-card"><div class="v" id="statDist">0.00</div><div class="l">距離 (km)</div></div>
@@ -123,6 +132,11 @@
     <div class="stat-card"><div class="v" id="sumMonthCount">0</div><div class="l">今月の回数</div></div>
     <div class="stat-card"><div class="v" id="sumTotalDist">0.0</div><div class="l">累計距離(km)</div></div>
   </div>
+
+  <h2 class="section-title">月別の合計</h2>
+  <div id="monthList"></div>
+
+  <h2 class="section-title">記録一覧</h2>
   <div id="runList"></div>
 </section>
 
@@ -216,25 +230,46 @@ let timerInterval = null;
 const MIN_ACCURACY = 35;      // これより精度が悪い点は無視 (m)
 const MAX_JUMP_SPEED = 8.5;   // m/s (時速約30km) を超える急な移動は誤差として無視
 
-function updateGpsBadge(ok, text){
+function updateGpsBadge(ok, text, isError){
   document.getElementById("gpsDot").className = "dot " + (ok===null? "" : ok? "ok":"bad");
   document.getElementById("gpsText").textContent = text;
+  document.getElementById("gpsBadge").classList.toggle("err", !!isError);
+}
+function showGpsHelp(html){
+  const el = document.getElementById("gpsHelp");
+  el.innerHTML = html;
+  el.classList.add("show");
+}
+function hideGpsHelp(){
+  document.getElementById("gpsHelp").classList.remove("show");
 }
 
 function onPosition(pos){
   const { latitude, longitude, accuracy } = pos.coords;
   const t = pos.timestamp;
+  hideGpsHelp();
 
+  // 精度に関わらず、現在地は常に地図・バッジに反映する（GPSが動いていることが見えるように）
   if(accuracy > MIN_ACCURACY){
-    updateGpsBadge(false, `精度が低いため待機中 (±${Math.round(accuracy)}m)`);
-    return;
+    updateGpsBadge(false, `位置を取得中…精度 ±${Math.round(accuracy)}m（安定するまで少し待ってください）`);
+  } else {
+    updateGpsBadge(true, `GPS良好 (±${Math.round(accuracy)}m)`);
   }
-  updateGpsBadge(true, `GPS良好 (±${Math.round(accuracy)}m)`);
+
+  if(!liveMarker){
+    liveMarker = L.circleMarker([latitude, longitude], { radius:7, color:"#fff", weight:2, fillColor:"#e65a28", fillOpacity:1 }).addTo(recordMap);
+  } else {
+    liveMarker.setLatLng([latitude, longitude]);
+  }
+  recordMap.panTo([latitude, longitude]);
 
   if(!tracking || paused) {
     recordMap.setView([latitude, longitude]);
     return;
   }
+
+  // 距離への加算は精度が悪い点を除外する（表示は上ですでに更新済み）
+  if(accuracy > MIN_ACCURACY) return;
 
   const last = points[points.length-1];
   if(last){
@@ -248,17 +283,28 @@ function onPosition(pos){
   }
   points.push({ lat: latitude, lon: longitude, t });
   liveLine.addLatLng([latitude, longitude]);
-  if(!liveMarker){
-    liveMarker = L.circleMarker([latitude, longitude], { radius:7, color:"#fff", weight:2, fillColor:"#e65a28", fillOpacity:1 }).addTo(recordMap);
-  } else {
-    liveMarker.setLatLng([latitude, longitude]);
-  }
-  recordMap.panTo([latitude, longitude]);
   document.getElementById("statDist").textContent = (distanceM/1000).toFixed(2);
 }
 
 function onPositionError(err){
-  updateGpsBadge(false, "GPS取得エラー: " + err.message);
+  let msg = "GPS取得エラー: " + err.message;
+  let help = "";
+  if(err.code === 1){ // PERMISSION_DENIED
+    msg = "位置情報の利用が許可されていません";
+    help = `位置情報がブロックされています。<br>
+      ・iPhone(Safari): 設定 → プライバシーとセキュリティ → 位置情報サービス → Safariのアプリ内Webサイト を「確認」または「常に許可」に。<br>
+      ・Android(Chrome): サイト情報（アドレスバーの鍵アイコン）→ 権限 → 位置情報 を「許可」に。<br>
+      ・端末本体の「位置情報サービス」自体がOFFになっていないかもご確認ください。<br>
+      許可を変更したら、このページを再読み込みしてください。`;
+  } else if(err.code === 2){ // POSITION_UNAVAILABLE
+    msg = "現在地を取得できません";
+    help = "電波の良い屋外で試すか、端末の位置情報サービスがONになっているかご確認ください。";
+  } else if(err.code === 3){ // TIMEOUT
+    msg = "GPS取得がタイムアウトしました";
+    help = "電波状況の良い場所で再度お試しください。屋内では取得できないことがあります。";
+  }
+  updateGpsBadge(false, msg, true);
+  if(help) showGpsHelp(help);
 }
 
 function currentElapsedSec(){
@@ -360,12 +406,22 @@ document.getElementById("btnStart").addEventListener("click", startTracking);
 document.getElementById("btnPause").addEventListener("click", togglePause);
 document.getElementById("btnStop").addEventListener("click", stopTracking);
 
-// 現在地を初期表示
+// 現在地を初期表示（位置情報の許可ダイアログはここで最初に出る）
 if(navigator.geolocation){
-  navigator.geolocation.getCurrentPosition(
-    pos => recordMap.setView([pos.coords.latitude, pos.coords.longitude], 16),
-    ()=>{}, { enableHighAccuracy:true, timeout:8000 }
-  );
+  if(!window.isSecureContext){
+    updateGpsBadge(false, "HTTPS(またはlocalhost)以外ではGPSが使えません", true);
+  } else {
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        recordMap.setView([pos.coords.latitude, pos.coords.longitude], 16);
+        updateGpsBadge(true, `GPS準備完了 (±${Math.round(pos.coords.accuracy)}m)`);
+      },
+      onPositionError,
+      { enableHighAccuracy:true, timeout:10000 }
+    );
+  }
+} else {
+  updateGpsBadge(false, "この端末・ブラウザは位置情報に対応していません", true);
 }
 
 /* ---------- 履歴画面 ---------- */
@@ -401,7 +457,7 @@ function renderHistory(){
     });
   }
 
-  // サマリー
+  // サマリー（今月）
   const now = new Date();
   const thisMonth = runs.filter(r=>{
     const d = new Date(r.date);
@@ -412,6 +468,33 @@ function renderHistory(){
   document.getElementById("sumMonthDist").textContent = monthDist.toFixed(1);
   document.getElementById("sumMonthCount").textContent = thisMonth.length;
   document.getElementById("sumTotalDist").textContent = totalDist.toFixed(1);
+
+  // 月別の合計（全期間、月ごとにグループ化）
+  const monthListEl = document.getElementById("monthList");
+  monthListEl.innerHTML = "";
+  if(runs.length === 0){
+    monthListEl.innerHTML = `<div class="empty" style="padding:16px 10px;">記録がまだありません</div>`;
+  } else {
+    const groups = {}; // "2026-08" -> { dist, count }
+    runs.forEach(r=>{
+      const d = new Date(r.date);
+      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+      if(!groups[key]) groups[key] = { dist:0, count:0, y:d.getFullYear(), m:d.getMonth()+1 };
+      groups[key].dist += r.distanceKm;
+      groups[key].count += 1;
+    });
+    const keys = Object.keys(groups).sort().reverse();
+    keys.forEach(key=>{
+      const g = groups[key];
+      const card = document.createElement("div");
+      card.className = "month-card";
+      card.innerHTML = `
+        <div class="m">${g.y}年${g.m}月</div>
+        <div class="d">${g.dist.toFixed(2)} km<span class="c">(${g.count}回)</span></div>
+      `;
+      monthListEl.appendChild(card);
+    });
+  }
 }
 
 /* ---------- 詳細モーダル ---------- */
