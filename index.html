@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>ランニング記録</title>
+<meta name="theme-color" content="#e65a28">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ランニング">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root{
+    --bg:#0f1115; --card:#1a1d24; --card2:#20242c; --border:#2a2f3a;
+    --text:#eef0f3; --sub:#9aa3b2; --accent:#e65a28; --accent2:#ff7a45;
+    --good:#3ecf6e; --bad:#ff5c5c;
+    --tabbar-h: 58px;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f4f5f7; --card:#ffffff; --card2:#fbfbfc; --border:#e3e5ea; --text:#20242c; --sub:#6b7280; }
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;
+    overscroll-behavior:none;
+    padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+  }
+  header{
+    position:sticky; top:0; z-index:20;
+    padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+    background:var(--bg); border-bottom:1px solid var(--border);
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  header h1{font-size:17px; margin:0; font-weight:700;}
+  .screen{display:none; padding:14px 14px 20px;}
+  .screen.active{display:block;}
+
+  /* ---- record screen ---- */
+  #map{ width:100%; height:38vh; min-height:220px; border-radius:14px; overflow:hidden; border:1px solid var(--border); background:var(--card2);}
+  .stats-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-top:14px;}
+  .stat-card{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px 8px; text-align:center;}
+  .stat-card .v{font-size:22px; font-weight:800; font-variant-numeric:tabular-nums;}
+  .stat-card .l{font-size:11px; color:var(--sub); margin-top:4px;}
+  .gps-badge{ display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--sub); margin-top:10px;}
+  .dot{width:8px; height:8px; border-radius:50%; background:var(--sub);}
+  .dot.ok{background:var(--good);}
+  .dot.bad{background:var(--bad);}
+  .controls{ display:flex; gap:10px; margin-top:16px;}
+  button{ font-family:inherit; border:none; cursor:pointer; }
+  .btn{ flex:1; padding:16px 10px; border-radius:14px; font-size:16px; font-weight:700; }
+  .btn-start{ background:var(--accent); color:#fff; }
+  .btn-pause{ background:var(--card2); color:var(--text); border:1px solid var(--border);}
+  .btn-stop{ background:var(--bad); color:#fff; }
+  .btn:disabled{opacity:.4;}
+
+  /* ---- history screen ---- */
+  .summary-bar{ display:flex; gap:10px; margin-bottom:14px;}
+  .summary-bar .stat-card{flex:1;}
+  .run-card{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:10px;}
+  .run-card .date{font-size:12px; color:var(--sub);}
+  .run-card .dist{font-size:20px; font-weight:800; margin-top:2px;}
+  .run-card .meta{font-size:12px; color:var(--sub); margin-top:4px;}
+  .run-card .del{ background:none; color:var(--sub); font-size:18px; padding:6px 10px;}
+  .empty{ text-align:center; color:var(--sub); padding:40px 10px; font-size:14px; }
+
+  /* ---- modal ---- */
+  .modal-back{ position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:40; display:none; align-items:flex-end; }
+  .modal-back.active{display:flex;}
+  .modal{ background:var(--bg); width:100%; max-height:88vh; border-radius:18px 18px 0 0; overflow:auto; padding:16px 16px calc(20px + env(safe-area-inset-bottom));}
+  .modal-title{display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;}
+  .modal-title h2{font-size:16px; margin:0;}
+  .close-x{ background:var(--card2); border:1px solid var(--border); border-radius:50%; width:32px; height:32px; color:var(--text); font-size:16px;}
+  #detailMap{ width:100%; height:32vh; min-height:200px; border-radius:14px; border:1px solid var(--border);}
+
+  /* ---- tab bar ---- */
+  nav.tabbar{
+    position:fixed; left:0; right:0; bottom:0; z-index:30;
+    height:calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+    padding-bottom:env(safe-area-inset-bottom);
+    background:var(--card); border-top:1px solid var(--border);
+    display:flex;
+  }
+  nav.tabbar button{ flex:1; background:none; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; color:var(--sub); font-size:11px; }
+  nav.tabbar button.active{ color:var(--accent); }
+  nav.tabbar .ic{font-size:18px;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="screenTitle">記録</h1>
+  <span id="statusText" style="font-size:12px;color:var(--sub);"></span>
+</header>
+
+<!-- 記録画面 -->
+<section class="screen active" id="screen-record">
+  <div id="map"></div>
+  <div class="gps-badge"><span class="dot" id="gpsDot"></span><span id="gpsText">GPS待機中</span></div>
+
+  <div class="stats-grid">
+    <div class="stat-card"><div class="v" id="statDist">0.00</div><div class="l">距離 (km)</div></div>
+    <div class="stat-card"><div class="v" id="statTime">00:00</div><div class="l">経過時間</div></div>
+    <div class="stat-card"><div class="v" id="statPace">--'--"</div><div class="l">平均ペース /km</div></div>
+  </div>
+
+  <div class="controls">
+    <button class="btn btn-start" id="btnStart">開始</button>
+    <button class="btn btn-pause" id="btnPause" disabled>一時停止</button>
+    <button class="btn btn-stop" id="btnStop" disabled>終了して保存</button>
+  </div>
+</section>
+
+<!-- 履歴画面 -->
+<section class="screen" id="screen-history">
+  <div class="summary-bar">
+    <div class="stat-card"><div class="v" id="sumMonthDist">0.0</div><div class="l">今月の距離(km)</div></div>
+    <div class="stat-card"><div class="v" id="sumMonthCount">0</div><div class="l">今月の回数</div></div>
+    <div class="stat-card"><div class="v" id="sumTotalDist">0.0</div><div class="l">累計距離(km)</div></div>
+  </div>
+  <div id="runList"></div>
+</section>
+
+<!-- 詳細モーダル -->
+<div class="modal-back" id="modalBack">
+  <div class="modal">
+    <div class="modal-title">
+      <h2 id="modalDate">-</h2>
+      <button class="close-x" id="modalClose">✕</button>
+    </div>
+    <div id="detailMap"></div>
+    <div class="stats-grid" style="margin-top:12px;">
+      <div class="stat-card"><div class="v" id="modalDist">-</div><div class="l">距離 (km)</div></div>
+      <div class="stat-card"><div class="v" id="modalTime">-</div><div class="l">時間</div></div>
+      <div class="stat-card"><div class="v" id="modalPace">-</div><div class="l">ペース /km</div></div>
+    </div>
+  </div>
+</div>
+
+<nav class="tabbar">
+  <button class="tab active" data-screen="record"><span class="ic">🏃</span>記録</button>
+  <button class="tab" data-screen="history"><span class="ic">📋</span>履歴</button>
+</nav>
+
+<script>
+const STORAGE_KEY = "running-tracker-v1";
+
+/* ---------- ユーティリティ ---------- */
+function loadRuns(){
+  try{ return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }catch(e){ return []; }
+}
+function saveRuns(runs){ localStorage.setItem(STORAGE_KEY, JSON.stringify(runs)); }
+
+function haversine(lat1, lon1, lat2, lon2){
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+function fmtTime(sec){
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+  if(h>0) return `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+  return `${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+}
+function fmtPace(sec, km){
+  if(!km || km <= 0) return "--'--\"";
+  const paceSec = sec / km;
+  const m = Math.floor(paceSec/60), s = Math.round(paceSec%60);
+  return `${m}'${String(s).padStart(2,"0")}"`;
+}
+function fmtDateJP(iso){
+  const d = new Date(iso);
+  const days = ["日","月","火","水","木","金","土"];
+  return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}(${days[d.getDay()]}) ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
+
+/* ---------- タブ切り替え ---------- */
+const titles = { record: "記録", history: "履歴" };
+document.querySelectorAll(".tabbar .tab").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    document.querySelectorAll(".tabbar .tab").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    const target = btn.dataset.screen;
+    document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
+    document.getElementById("screen-"+target).classList.add("active");
+    document.getElementById("screenTitle").textContent = titles[target];
+    if(target === "history") renderHistory();
+    if(target === "record") setTimeout(()=>recordMap.invalidateSize(), 50);
+  });
+});
+
+/* ---------- 記録画面：地図 ---------- */
+const recordMap = L.map("map", { zoomControl:false, attributionControl:false }).setView([35.681236,139.767125], 15);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom:19 }).addTo(recordMap);
+L.control.attribution({prefix:false}).addAttribution("&copy; OpenStreetMap").addTo(recordMap);
+let liveLine = L.polyline([], { color:"#e65a28", weight:5 }).addTo(recordMap);
+let liveMarker = null;
+
+/* ---------- トラッキング状態 ---------- */
+let watchId = null;
+let tracking = false;
+let paused = false;
+let points = [];        // {lat, lon, t}
+let distanceM = 0;
+let startTime = null;
+let elapsedBeforePause = 0;
+let pauseStartedAt = null;
+let timerInterval = null;
+const MIN_ACCURACY = 35;      // これより精度が悪い点は無視 (m)
+const MAX_JUMP_SPEED = 8.5;   // m/s (時速約30km) を超える急な移動は誤差として無視
+
+function updateGpsBadge(ok, text){
+  document.getElementById("gpsDot").className = "dot " + (ok===null? "" : ok? "ok":"bad");
+  document.getElementById("gpsText").textContent = text;
+}
+
+function onPosition(pos){
+  const { latitude, longitude, accuracy } = pos.coords;
+  const t = pos.timestamp;
+
+  if(accuracy > MIN_ACCURACY){
+    updateGpsBadge(false, `精度が低いため待機中 (±${Math.round(accuracy)}m)`);
+    return;
+  }
+  updateGpsBadge(true, `GPS良好 (±${Math.round(accuracy)}m)`);
+
+  if(!tracking || paused) {
+    recordMap.setView([latitude, longitude]);
+    return;
+  }
+
+  const last = points[points.length-1];
+  if(last){
+    const d = haversine(last.lat, last.lon, latitude, longitude);
+    const dt = (t - last.t) / 1000;
+    const speed = dt > 0 ? d / dt : 0;
+    if(speed > MAX_JUMP_SPEED){
+      return; // 明らかな誤差ジャンプは無視
+    }
+    distanceM += d;
+  }
+  points.push({ lat: latitude, lon: longitude, t });
+  liveLine.addLatLng([latitude, longitude]);
+  if(!liveMarker){
+    liveMarker = L.circleMarker([latitude, longitude], { radius:7, color:"#fff", weight:2, fillColor:"#e65a28", fillOpacity:1 }).addTo(recordMap);
+  } else {
+    liveMarker.setLatLng([latitude, longitude]);
+  }
+  recordMap.panTo([latitude, longitude]);
+  document.getElementById("statDist").textContent = (distanceM/1000).toFixed(2);
+}
+
+function onPositionError(err){
+  updateGpsBadge(false, "GPS取得エラー: " + err.message);
+}
+
+function currentElapsedSec(){
+  if(!startTime) return 0;
+  const now = paused && pauseStartedAt ? pauseStartedAt : Date.now();
+  return elapsedBeforePause + (now - startTime)/1000;
+}
+
+function tickTimer(){
+  const el = currentElapsedSec();
+  document.getElementById("statTime").textContent = fmtTime(el);
+  document.getElementById("statPace").textContent = fmtPace(el, distanceM/1000);
+}
+
+function startTracking(){
+  if(!navigator.geolocation){
+    alert("この端末・ブラウザは位置情報に対応していません。");
+    return;
+  }
+  tracking = true; paused = false;
+  points = []; distanceM = 0;
+  liveLine.setLatLngs([]);
+  if(liveMarker){ recordMap.removeLayer(liveMarker); liveMarker = null; }
+  startTime = Date.now();
+  elapsedBeforePause = 0;
+  document.getElementById("statDist").textContent = "0.00";
+  document.getElementById("statTime").textContent = "00:00";
+  document.getElementById("statPace").textContent = "--'--\"";
+
+  watchId = navigator.geolocation.watchPosition(onPosition, onPositionError, {
+    enableHighAccuracy:true, maximumAge:1000, timeout:15000
+  });
+  timerInterval = setInterval(tickTimer, 1000);
+
+  document.getElementById("btnStart").disabled = true;
+  document.getElementById("btnPause").disabled = false;
+  document.getElementById("btnStop").disabled = false;
+  document.getElementById("btnPause").textContent = "一時停止";
+}
+
+function togglePause(){
+  if(!paused){
+    paused = true;
+    pauseStartedAt = Date.now();
+    elapsedBeforePause += (pauseStartedAt - startTime)/1000;
+    document.getElementById("btnPause").textContent = "再開";
+    updateGpsBadge(null, "一時停止中");
+  } else {
+    paused = false;
+    startTime = Date.now();
+    pauseStartedAt = null;
+    document.getElementById("btnPause").textContent = "一時停止";
+  }
+}
+
+function stopTracking(){
+  if(watchId !== null){ navigator.geolocation.clearWatch(watchId); watchId = null; }
+  if(timerInterval){ clearInterval(timerInterval); timerInterval = null; }
+
+  const elapsedSec = currentElapsedSec();
+  const km = distanceM/1000;
+
+  tracking = false; paused = false;
+  document.getElementById("btnStart").disabled = false;
+  document.getElementById("btnPause").disabled = true;
+  document.getElementById("btnStop").disabled = true;
+
+  if(km < 0.03){
+    alert("記録距離が短すぎるため保存しませんでした。");
+    resetLive();
+    return;
+  }
+
+  const run = {
+    id: Date.now(),
+    date: new Date().toISOString(),
+    distanceKm: km,
+    durationSec: elapsedSec,
+    points: points.map(p => [p.lat, p.lon])
+  };
+  const runs = loadRuns();
+  runs.unshift(run);
+  saveRuns(runs);
+
+  alert(`保存しました：${km.toFixed(2)}km / ${fmtTime(elapsedSec)}`);
+  resetLive();
+}
+
+function resetLive(){
+  points = []; distanceM = 0; startTime = null; elapsedBeforePause = 0;
+  liveLine.setLatLngs([]);
+  if(liveMarker){ recordMap.removeLayer(liveMarker); liveMarker = null; }
+  document.getElementById("statDist").textContent = "0.00";
+  document.getElementById("statTime").textContent = "00:00";
+  document.getElementById("statPace").textContent = "--'--\"";
+}
+
+document.getElementById("btnStart").addEventListener("click", startTracking);
+document.getElementById("btnPause").addEventListener("click", togglePause);
+document.getElementById("btnStop").addEventListener("click", stopTracking);
+
+// 現在地を初期表示
+if(navigator.geolocation){
+  navigator.geolocation.getCurrentPosition(
+    pos => recordMap.setView([pos.coords.latitude, pos.coords.longitude], 16),
+    ()=>{}, { enableHighAccuracy:true, timeout:8000 }
+  );
+}
+
+/* ---------- 履歴画面 ---------- */
+function renderHistory(){
+  const runs = loadRuns();
+  const listEl = document.getElementById("runList");
+  listEl.innerHTML = "";
+
+  if(runs.length === 0){
+    listEl.innerHTML = `<div class="empty">まだ記録がありません。<br>「記録」タブから開始してください。</div>`;
+  } else {
+    runs.forEach(run=>{
+      const card = document.createElement("div");
+      card.className = "run-card";
+      card.innerHTML = `
+        <div style="flex:1" class="open">
+          <div class="date">${fmtDateJP(run.date)}</div>
+          <div class="dist">${run.distanceKm.toFixed(2)} km</div>
+          <div class="meta">${fmtTime(run.durationSec)} ・ ${fmtPace(run.durationSec, run.distanceKm)} /km</div>
+        </div>
+        <button class="del">🗑</button>
+      `;
+      card.querySelector(".open").addEventListener("click", ()=> openDetail(run));
+      card.querySelector(".del").addEventListener("click", (e)=>{
+        e.stopPropagation();
+        if(confirm("この記録を削除しますか？")){
+          const rest = loadRuns().filter(r=>r.id !== run.id);
+          saveRuns(rest);
+          renderHistory();
+        }
+      });
+      listEl.appendChild(card);
+    });
+  }
+
+  // サマリー
+  const now = new Date();
+  const thisMonth = runs.filter(r=>{
+    const d = new Date(r.date);
+    return d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth();
+  });
+  const monthDist = thisMonth.reduce((s,r)=>s+r.distanceKm,0);
+  const totalDist = runs.reduce((s,r)=>s+r.distanceKm,0);
+  document.getElementById("sumMonthDist").textContent = monthDist.toFixed(1);
+  document.getElementById("sumMonthCount").textContent = thisMonth.length;
+  document.getElementById("sumTotalDist").textContent = totalDist.toFixed(1);
+}
+
+/* ---------- 詳細モーダル ---------- */
+let detailMap = null;
+function openDetail(run){
+  document.getElementById("modalDate").textContent = fmtDateJP(run.date);
+  document.getElementById("modalDist").textContent = run.distanceKm.toFixed(2);
+  document.getElementById("modalTime").textContent = fmtTime(run.durationSec);
+  document.getElementById("modalPace").textContent = fmtPace(run.durationSec, run.distanceKm);
+  document.getElementById("modalBack").classList.add("active");
+
+  setTimeout(()=>{
+    if(!detailMap){
+      detailMap = L.map("detailMap", { zoomControl:false, attributionControl:false });
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom:19 }).addTo(detailMap);
+    }
+    detailMap.eachLayer(l=>{ if(l instanceof L.Polyline || l instanceof L.CircleMarker) detailMap.removeLayer(l); });
+    if(run.points && run.points.length > 0){
+      const line = L.polyline(run.points, { color:"#e65a28", weight:5 }).addTo(detailMap);
+      L.circleMarker(run.points[0], { radius:6, color:"#fff", weight:2, fillColor:"#3ecf6e", fillOpacity:1 }).addTo(detailMap);
+      L.circleMarker(run.points[run.points.length-1], { radius:6, color:"#fff", weight:2, fillColor:"#ff5c5c", fillOpacity:1 }).addTo(detailMap);
+      detailMap.fitBounds(line.getBounds(), { padding:[20,20] });
+    } else {
+      detailMap.setView([35.681236,139.767125], 13);
+    }
+    detailMap.invalidateSize();
+  }, 60);
+}
+document.getElementById("modalClose").addEventListener("click", ()=>{
+  document.getElementById("modalBack").classList.remove("active");
+});
+document.getElementById("modalBack").addEventListener("click", (e)=>{
+  if(e.target.id === "modalBack") document.getElementById("modalBack").classList.remove("active");
+});
+
+/* ---------- Service Worker (オフライン対応) ---------- */
+if("serviceWorker" in navigator){
+  window.addEventListener("load", ()=>{
+    navigator.serviceWorker.register("sw.js").catch(()=>{});
+  });
+}
+</script>
+</body>
+</html>
