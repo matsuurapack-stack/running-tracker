@@ -61,6 +61,7 @@
   .btn-pause{ background:var(--card2); color:var(--text); border:1px solid var(--border);}
   .btn-stop{ background:var(--bad); color:#fff; }
   .btn:disabled{opacity:.4;}
+  .note{ font-size:11px; color:var(--sub); text-align:center; margin-top:12px; line-height:1.6; }
 
   /* ---- history screen ---- */
   .summary-bar{ display:flex; gap:10px; margin-bottom:14px;}
@@ -127,6 +128,7 @@
     <button class="btn btn-pause" id="btnPause" disabled>一時停止</button>
     <button class="btn btn-stop" id="btnStop" disabled>終了して保存</button>
   </div>
+  <div class="note">計測中は画面をつけたまま・アプリを閉じずにお使いください。<br>ロック画面やアプリ切り替えでGPSが一時停止することがあります。</div>
 </section>
 
 <!-- 履歴画面 -->
@@ -257,8 +259,40 @@ let startTime = null;
 let elapsedBeforePause = 0;
 let pauseStartedAt = null;
 let timerInterval = null;
+let wakeLock = null;
+let backgroundedWhileTracking = false; // バックグラウンドから復帰した直後かどうか
 const MIN_ACCURACY = 35;      // これより精度が悪い点は無視 (m)
 const MAX_JUMP_SPEED = 8.5;   // m/s (時速約30km) を超える急な移動は誤差として無視
+
+/* ---------- 画面スリープ防止（Wake Lock） ---------- */
+async function requestWakeLock(){
+  if(!("wakeLock" in navigator)) return;
+  try{
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", ()=>{ wakeLock = null; });
+  }catch(e){
+    // 取得失敗（バッテリーセーバー等）は無視。トラッキング自体は継続する。
+  }
+}
+function releaseWakeLock(){
+  if(wakeLock){ wakeLock.release().catch(()=>{}); wakeLock = null; }
+}
+
+/* アプリがバックグラウンドに回った/戻ったタイミングを検知。
+   バックグラウンド中はブラウザの仕様でGPSが止まる（またはかなり間引かれる）ため、
+   復帰後の最初の1点は直前の位置との間の距離を加算しない（テレポート誤差の防止）。 */
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState === "hidden"){
+    if(tracking && !paused) backgroundedWhileTracking = true;
+  } else if(document.visibilityState === "visible"){
+    if(tracking && !paused){
+      requestWakeLock();
+      if(backgroundedWhileTracking){
+        updateGpsBadge(null, "バックグラウンドから復帰しました。GPSの安定を待っています…");
+      }
+    }
+  }
+});
 
 function updateGpsBadge(ok, text, isError){
   document.getElementById("gpsDot").className = "dot " + (ok===null? "" : ok? "ok":"bad");
@@ -300,6 +334,16 @@ function onPosition(pos){
 
   // 距離への加算は精度が悪い点を除外する（表示は上ですでに更新済み）
   if(accuracy > MIN_ACCURACY) return;
+
+  // バックグラウンドから復帰した直後の1点は、直前の位置との間を「移動した」とみなさない
+  // （その間の実際の経路はGPSが取れていないため、直線テレポートを距離に加算しない）
+  if(backgroundedWhileTracking){
+    backgroundedWhileTracking = false;
+    points.push({ lat: latitude, lon: longitude, t });
+    liveLine.addLatLng([latitude, longitude]);
+    updateGpsBadge(true, `GPS良好 (±${Math.round(accuracy)}m)・復帰しました`);
+    return;
+  }
 
   const last = points[points.length-1];
   if(last){
@@ -356,6 +400,7 @@ function startTracking(){
   }
   tracking = true; paused = false;
   points = []; distanceM = 0;
+  backgroundedWhileTracking = false;
   liveLine.setLatLngs([]);
   if(liveMarker){ recordMap.removeLayer(liveMarker); liveMarker = null; }
   startTime = Date.now();
@@ -368,6 +413,7 @@ function startTracking(){
     enableHighAccuracy:true, maximumAge:1000, timeout:15000
   });
   timerInterval = setInterval(tickTimer, 1000);
+  requestWakeLock();
 
   document.getElementById("btnStart").disabled = true;
   document.getElementById("btnPause").disabled = false;
@@ -382,17 +428,22 @@ function togglePause(){
     elapsedBeforePause += (pauseStartedAt - startTime)/1000;
     document.getElementById("btnPause").textContent = "再開";
     updateGpsBadge(null, "一時停止中");
+    releaseWakeLock();
   } else {
     paused = false;
     startTime = Date.now();
     pauseStartedAt = null;
+    backgroundedWhileTracking = false;
     document.getElementById("btnPause").textContent = "一時停止";
+    requestWakeLock();
   }
 }
 
 function stopTracking(){
   if(watchId !== null){ navigator.geolocation.clearWatch(watchId); watchId = null; }
   if(timerInterval){ clearInterval(timerInterval); timerInterval = null; }
+  releaseWakeLock();
+  backgroundedWhileTracking = false;
 
   const elapsedSec = currentElapsedSec();
   const km = distanceM/1000;
