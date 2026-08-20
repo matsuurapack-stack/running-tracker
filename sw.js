@@ -1,6 +1,10 @@
 // シンプルなオフラインキャッシュ（アプリの外枠だけ）
 // 地図タイル(OpenStreetMap)は都度取得のためキャッシュしません。GPS記録自体はネット不要です。
-const CACHE_NAME = "running-tracker-shell-v1";
+//
+// 方針：ネットワーク優先。まずネットから最新を取りに行き、取れた分はキャッシュを上書き更新する。
+// オフライン・電波不良のときだけキャッシュにフォールバックする。
+// （キャッシュファーストだと、一度キャッシュしたきり更新に気づけずアプリが更新されない問題があったため）
+const CACHE_NAME = "running-tracker-shell-v2";
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -27,16 +31,14 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  // 同一オリジンのアプリ本体だけキャッシュファースト。それ以外(地図タイル等)はネットワークにそのまま任せる。
+  // 同一オリジンのアプリ本体だけ対象。それ以外(地図タイル等)はネットワークにそのまま任せる。
   if (url.origin === self.location.origin) {
     event.respondWith(
-      caches.match(event.request).then((cached) => {
-        return cached || fetch(event.request).then((res) => {
-          const resClone = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, resClone));
-          return res;
-        }).catch(() => cached);
-      })
+      fetch(event.request).then((res) => {
+        const resClone = res.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, resClone));
+        return res;
+      }).catch(() => caches.match(event.request))
     );
   }
 });
