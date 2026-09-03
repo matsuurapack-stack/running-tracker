@@ -81,6 +81,14 @@
   .month-card .m{ font-size:14px; font-weight:700; }
   .month-card .d{ font-size:16px; font-weight:800; }
   .month-card .c{ font-size:11px; color:var(--sub); margin-left:6px; font-weight:400; }
+  .add-manual-btn{ width:100%; background:var(--card); border:1px dashed var(--border); color:var(--sub); border-radius:14px; padding:14px; font-size:14px; font-weight:700; margin-bottom:16px; }
+  .run-card .thumb.machine-thumb{ display:flex; align-items:center; justify-content:center; font-size:22px; background:var(--card2); }
+  .form-field{ margin-bottom:14px; }
+  .form-field label{ display:block; font-size:12px; color:var(--sub); margin-bottom:6px; font-weight:700; }
+  .form-field input{
+    width:100%; box-sizing:border-box; background:var(--card2); border:1px solid var(--border); color:var(--text);
+    border-radius:10px; padding:12px; font-size:16px; font-family:inherit;
+  }
 
   /* ---- modal ---- */
   .modal-back{ position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:40; display:none; align-items:flex-end; }
@@ -139,12 +147,37 @@
     <div class="stat-card"><div class="v" id="sumTotalDist">0.0</div><div class="l">累計距離(km)</div></div>
   </div>
 
+  <button class="add-manual-btn" id="btnAddManual">＋ ランニングマシンの記録を追加</button>
+
   <h2 class="section-title">月別の合計</h2>
   <div id="monthList"></div>
 
   <h2 class="section-title">記録一覧</h2>
   <div id="runList"></div>
 </section>
+
+<!-- ランニングマシン手動記録モーダル -->
+<div class="modal-back" id="manualModalBack">
+  <div class="modal">
+    <div class="modal-title">
+      <h2>ランニングマシンの記録を追加</h2>
+      <button class="close-x" id="manualModalClose">✕</button>
+    </div>
+    <div class="form-field">
+      <label for="manualDate">日付</label>
+      <input type="date" id="manualDate">
+    </div>
+    <div class="form-field">
+      <label for="manualTime">時刻</label>
+      <input type="time" id="manualTime">
+    </div>
+    <div class="form-field">
+      <label for="manualDist">距離 (km)</label>
+      <input type="number" id="manualDist" step="0.01" min="0.01" inputmode="decimal" placeholder="例: 3.50">
+    </div>
+    <button class="btn btn-start" id="manualSave" style="width:100%;">保存</button>
+  </div>
+</div>
 
 <!-- 詳細モーダル -->
 <div class="modal-back" id="modalBack">
@@ -184,12 +217,14 @@ function haversine(lat1, lon1, lat2, lon2){
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 function fmtTime(sec){
+  if(sec === null || sec === undefined || isNaN(sec)) return "-";
   sec = Math.max(0, Math.round(sec));
   const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
   if(h>0) return `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
   return `${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
 }
 function fmtPace(sec, km){
+  if(sec === null || sec === undefined || isNaN(sec)) return "--'--\"";
   if(!km || km <= 0) return "--'--\"";
   const paceSec = sec / km;
   const m = Math.floor(paceSec/60), s = Math.round(paceSec%60);
@@ -461,6 +496,7 @@ function stopTracking(){
 
   const run = {
     id: Date.now(),
+    type: "gps",
     date: new Date().toISOString(),
     distanceKm: km,
     durationSec: elapsedSec,
@@ -514,11 +550,21 @@ function renderHistory(){
   if(runs.length === 0){
     listEl.innerHTML = `<div class="empty">まだ記録がありません。<br>「記録」タブから開始してください。</div>`;
   } else {
-    runs.forEach(run=>{
-      const thumb = routeThumbnailSVG(run.points, 60);
-      const thumbHtml = thumb
-        ? `<div class="thumb">${thumb}</div>`
-        : `<div class="thumb empty-thumb">🏃</div>`;
+    // 新しい順（日付基準）に並べ替えて表示
+    const sorted = runs.slice().sort((a,b)=> new Date(b.date) - new Date(a.date));
+    sorted.forEach(run=>{
+      const isMachine = run.type === "machine";
+      let thumbHtml, metaHtml;
+      if(isMachine){
+        thumbHtml = `<div class="thumb machine-thumb">🏋️</div>`;
+        metaHtml = `<div class="meta">ランニングマシン</div>`;
+      } else {
+        const thumb = routeThumbnailSVG(run.points, 60);
+        thumbHtml = thumb
+          ? `<div class="thumb">${thumb}</div>`
+          : `<div class="thumb empty-thumb">🏃</div>`;
+        metaHtml = `<div class="meta">${fmtTime(run.durationSec)} ・ ${fmtPace(run.durationSec, run.distanceKm)} /km</div>`;
+      }
       const card = document.createElement("div");
       card.className = "run-card";
       card.innerHTML = `
@@ -527,12 +573,14 @@ function renderHistory(){
           <div class="info">
             <div class="date">${fmtDateJP(run.date)}</div>
             <div class="dist">${run.distanceKm.toFixed(2)} km</div>
-            <div class="meta">${fmtTime(run.durationSec)} ・ ${fmtPace(run.durationSec, run.distanceKm)} /km</div>
+            ${metaHtml}
           </div>
         </div>
         <button class="del">🗑</button>
       `;
-      card.querySelector(".open").addEventListener("click", ()=> openDetail(run));
+      if(!isMachine){
+        card.querySelector(".open").addEventListener("click", ()=> openDetail(run));
+      }
       card.querySelector(".del").addEventListener("click", (e)=>{
         e.stopPropagation();
         if(confirm("この記録を削除しますか？")){
@@ -617,6 +665,62 @@ document.getElementById("modalClose").addEventListener("click", ()=>{
 document.getElementById("modalBack").addEventListener("click", (e)=>{
   if(e.target.id === "modalBack") document.getElementById("modalBack").classList.remove("active");
 });
+
+/* ---------- ランニングマシン手動記録 ---------- */
+function pad2(n){ return String(n).padStart(2, "0"); }
+
+function openManualModal(){
+  const now = new Date();
+  document.getElementById("manualDate").value = `${now.getFullYear()}-${pad2(now.getMonth()+1)}-${pad2(now.getDate())}`;
+  document.getElementById("manualTime").value = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+  document.getElementById("manualDist").value = "";
+  document.getElementById("manualModalBack").classList.add("active");
+}
+function closeManualModal(){
+  document.getElementById("manualModalBack").classList.remove("active");
+}
+function saveManualRun(){
+  const dateStr = document.getElementById("manualDate").value;
+  const timeStr = document.getElementById("manualTime").value || "00:00";
+  const distVal = parseFloat(document.getElementById("manualDist").value);
+
+  if(!dateStr){
+    alert("日付を入力してください。");
+    return;
+  }
+  if(!distVal || distVal <= 0){
+    alert("距離(km)を正しく入力してください。");
+    return;
+  }
+
+  const dt = new Date(`${dateStr}T${timeStr}:00`);
+  if(isNaN(dt.getTime())){
+    alert("日時の形式が正しくありません。");
+    return;
+  }
+
+  const run = {
+    id: Date.now(),
+    type: "machine",
+    date: dt.toISOString(),
+    distanceKm: distVal,
+    durationSec: null,
+    points: []
+  };
+  const runs = loadRuns();
+  runs.unshift(run);
+  saveRuns(runs);
+
+  closeManualModal();
+  renderHistory();
+}
+
+document.getElementById("btnAddManual").addEventListener("click", openManualModal);
+document.getElementById("manualModalClose").addEventListener("click", closeManualModal);
+document.getElementById("manualModalBack").addEventListener("click", (e)=>{
+  if(e.target.id === "manualModalBack") closeManualModal();
+});
+document.getElementById("manualSave").addEventListener("click", saveManualRun);
 
 /* ---------- Service Worker (オフライン対応) ---------- */
 if("serviceWorker" in navigator){
