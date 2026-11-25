@@ -418,8 +418,11 @@ function onPositionError(err){
 
 function currentElapsedSec(){
   if(!startTime) return 0;
-  const now = paused && pauseStartedAt ? pauseStartedAt : Date.now();
-  return elapsedBeforePause + (now - startTime)/1000;
+  // 一時停止中は、togglePause()の時点で既に elapsedBeforePause に
+  // 「停止直前までの経過時間」を加算済みなので、ここで再度足すと二重加算になる。
+  // 一時停止中は elapsedBeforePause をそのまま返す（時間は進まない）。
+  if(paused) return elapsedBeforePause;
+  return elapsedBeforePause + (Date.now() - startTime)/1000;
 }
 
 function tickTimer(){
