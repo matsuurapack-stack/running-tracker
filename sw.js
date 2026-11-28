@@ -4,7 +4,7 @@
 // 方針：ネットワーク優先。まずネットから最新を取りに行き、取れた分はキャッシュを上書き更新する。
 // オフライン・電波不良のときだけキャッシュにフォールバックする。
 // （キャッシュファーストだと、一度キャッシュしたきり更新に気づけずアプリが更新されない問題があったため）
-const CACHE_NAME = "running-tracker-shell-v2";
+const CACHE_NAME = "running-tracker-shell-v3";
 const SHELL_FILES = [
   "./",
   "./index.html",

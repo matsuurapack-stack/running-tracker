@@ -730,6 +730,20 @@ if("serviceWorker" in navigator){
   window.addEventListener("load", ()=>{
     navigator.serviceWorker.register("sw.js").catch(()=>{});
   });
+
+  // 新しいバージョンのService Workerが有効になったら、自動で1回だけ再読み込みする。
+  // (手動でのキャッシュクリアに頼らず、常に最新のアプリが表示されるようにするため)
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener("controllerchange", ()=>{
+    if(refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
+
+  // 既にページを開いたまま新しいバージョンが降ってきた場合も、定期的にSWの更新確認を行う
+  navigator.serviceWorker.getRegistration().then(reg=>{
+    if(reg) setInterval(()=>reg.update().catch(()=>{}), 60000);
+  });
 }
 </script>
 </body>
