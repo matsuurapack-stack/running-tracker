@@ -82,6 +82,8 @@
   .month-card .d{ font-size:16px; font-weight:800; }
   .month-card .c{ font-size:11px; color:var(--sub); margin-left:6px; font-weight:400; }
   .add-manual-btn{ width:100%; background:var(--card); border:1px dashed var(--border); color:var(--sub); border-radius:14px; padding:14px; font-size:14px; font-weight:700; margin-bottom:16px; }
+  .backup-row{ display:flex; gap:10px; margin-bottom:20px; }
+  .backup-btn{ flex:1; background:var(--card); border:1px solid var(--border); color:var(--sub); border-radius:12px; padding:10px; font-size:12px; font-weight:700; }
   .run-card .thumb.machine-thumb{ display:flex; align-items:center; justify-content:center; font-size:22px; background:var(--card2); }
   .form-field{ margin-bottom:14px; }
   .form-field label{ display:block; font-size:12px; color:var(--sub); margin-bottom:6px; font-weight:700; }
@@ -148,6 +150,12 @@
   </div>
 
   <button class="add-manual-btn" id="btnAddManual">＋ ランニングマシンの記録を追加</button>
+
+  <div class="backup-row">
+    <button class="backup-btn" id="btnBackup">📤 バックアップ(JSON保存)</button>
+    <button class="backup-btn" id="btnRestore">📥 復元</button>
+    <input type="file" id="restoreFile" accept="application/json" style="display:none;">
+  </div>
 
   <h2 class="section-title">月別の合計</h2>
   <div id="monthList"></div>
@@ -724,6 +732,52 @@ document.getElementById("manualModalBack").addEventListener("click", (e)=>{
   if(e.target.id === "manualModalBack") closeManualModal();
 });
 document.getElementById("manualSave").addEventListener("click", saveManualRun);
+
+/* ---------- バックアップ / 復元 ---------- */
+function backupRuns(){
+  const runs = loadRuns();
+  const blob = new Blob([JSON.stringify(runs, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const now = new Date();
+  const stamp = `${now.getFullYear()}${pad2(now.getMonth()+1)}${pad2(now.getDate())}-${pad2(now.getHours())}${pad2(now.getMinutes())}`;
+  a.href = url;
+  a.download = `running-backup-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function restoreRuns(file){
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    try{
+      const imported = JSON.parse(reader.result);
+      if(!Array.isArray(imported)) throw new Error("形式が正しくありません");
+      const current = loadRuns();
+      // id が重複しないものだけ追加する(同じバックアップを誤って2回読み込んでも重複しない)
+      const existingIds = new Set(current.map(r=>r.id));
+      const merged = current.concat(imported.filter(r=>!existingIds.has(r.id)));
+      saveRuns(merged);
+      renderHistory();
+      alert(`復元しました（${imported.length}件のうち新規${merged.length - current.length}件を追加）`);
+    }catch(e){
+      alert("復元に失敗しました。正しいバックアップファイルか確認してください。");
+    }
+  };
+  reader.readAsText(file);
+}
+
+document.getElementById("btnBackup").addEventListener("click", backupRuns);
+document.getElementById("btnRestore").addEventListener("click", ()=>{
+  document.getElementById("restoreFile").click();
+});
+document.getElementById("restoreFile").addEventListener("change", (e)=>{
+  const file = e.target.files[0];
+  if(file) restoreRuns(file);
+  e.target.value = "";
+});
 
 /* ---------- Service Worker (オフライン対応) ---------- */
 if("serviceWorker" in navigator){
