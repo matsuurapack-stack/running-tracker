@@ -734,15 +734,32 @@ document.getElementById("manualModalBack").addEventListener("click", (e)=>{
 document.getElementById("manualSave").addEventListener("click", saveManualRun);
 
 /* ---------- バックアップ / 復元 ---------- */
-function backupRuns(){
+async function backupRuns(){
   const runs = loadRuns();
-  const blob = new Blob([JSON.stringify(runs, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
+  const json = JSON.stringify(runs, null, 2);
   const now = new Date();
   const stamp = `${now.getFullYear()}${pad2(now.getMonth()+1)}${pad2(now.getDate())}-${pad2(now.getHours())}${pad2(now.getMinutes())}`;
+  const filename = `running-backup-${stamp}.json`;
+  const blob = new Blob([json], { type: "application/json" });
+
+  // iPhoneのホーム画面アプリ(PWA)では <a download> が効かないことがあるため、
+  // 対応していれば共有シート(Web Share API)経由で「ファイルに保存」できるようにする。
+  try{
+    const file = new File([blob], filename, { type: "application/json" });
+    if(navigator.canShare && navigator.canShare({ files: [file] })){
+      await navigator.share({ files: [file], title: filename });
+      return;
+    }
+  }catch(e){
+    // ユーザーが共有をキャンセルした場合(AbortError)は何もしない
+    if(e && e.name === "AbortError") return;
+  }
+
+  // 共有APIが使えない場合は、従来のダウンロードリンク方式にフォールバック
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
   a.href = url;
-  a.download = `running-backup-${stamp}.json`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
